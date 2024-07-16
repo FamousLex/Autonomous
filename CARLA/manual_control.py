@@ -97,6 +97,7 @@ import threading
 
 try:
     import pygame
+    TOGGLE_FULLSCREEN = pygame.USEREVENT + 1 
     from pygame.locals import KMOD_CTRL
     from pygame.locals import KMOD_SHIFT
     from pygame.locals import K_0
@@ -298,6 +299,11 @@ def on_apply_props(sender, app_data, user_data):
     number_of_props = dpg.get_value(props_input_tag)
     world.spawn_props(number_of_props)  # Update the number of props
 
+def on_toggle_camera_sensor(sender, app_data, user_data):
+    world, sensor_tag = user_data
+    world.camera_manager.set_sensor(sensor_tag)
+
+
 def toggle_spectator_mode(sender, app_data, user_data):
     world = user_data
     world.is_spectator_mode = not world.is_spectator_mode
@@ -329,6 +335,19 @@ def on_switch_to_previous_vehicle(sender, app_data, user_data):
 def on_switch_to_next_vehicle(sender, app_data, user_data):
     world = user_data
     world.switch_to_next_vehicle()
+
+# def toggle_fullscreen():
+#     global display, fullscreen, screen_width, screen_height
+#     fullscreen = not fullscreen
+#     if fullscreen:
+#         display = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+#     else:
+#         display = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+#     dpg.configure_item("fullscreen_button", label="Fullscreen On" if fullscreen else "Fullscreen Off")
+
+def toggle_fullscreen():
+    pygame.event.post(pygame.event.Event(TOGGLE_FULLSCREEN))
+
 
 def on_start_recording(sender, app_data, user_data):
     world, file_path = user_data
@@ -431,6 +450,7 @@ def delete_item_if_exists(tag):
     if dpg.does_item_exist(tag):
         dpg.delete_item(tag)
 
+
 def run_gui(world, client):
     dpg.create_context()
 
@@ -469,6 +489,22 @@ def run_gui(world, client):
             props_input_tag = dpg.add_input_int(label="Number of Props", default_value=75)
             dpg.add_button(label="Spawn Props", callback=on_apply_props, user_data=(world, props_input_tag))
 
+            with dpg.child(horizontal_scrollbar=True, width=-1, height=50, autosize_x=True):
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="RGB", callback=on_toggle_camera_sensor, user_data=(world, 0))
+                    dpg.add_button(label="Depth Sensor", callback=on_toggle_camera_sensor, user_data=(world, 1))
+                    dpg.add_button(label="Gray Scale ", callback=on_toggle_camera_sensor, user_data=(world, 2))
+                    dpg.add_button(label="Logarithmic Gray Scale", callback=on_toggle_camera_sensor, user_data=(world, 3))
+                    dpg.add_button(label="Semantic Segmentation", callback=on_toggle_camera_sensor, user_data=(world, 4))
+                    dpg.add_button(label="Semantic Segmentation (CityScapes Palette)", callback=on_toggle_camera_sensor, user_data=(world, 5))
+                    dpg.add_button(label="Instance Segmentation", callback=on_toggle_camera_sensor, user_data=(world, 7))
+                    dpg.add_button(label="Lidar Ray-cast", callback=on_toggle_camera_sensor, user_data=(world, 8))
+                    dpg.add_button(label="Dynamic Vision Sensor", callback=on_toggle_camera_sensor, user_data=(world, 9))
+                    dpg.add_button(label="RGB Distorted", callback=on_toggle_camera_sensor, user_data=(world, 10))
+                    dpg.add_button(label="Optical Flow", callback=on_toggle_camera_sensor, user_data=(world, 11))
+                    dpg.add_button(label="Camera Normals", callback=on_toggle_camera_sensor, user_data=(world, 12)) 
+
+
         with dpg.collapsing_header(label="Recording Controls", default_open=False):
             # Input for file name
             dpg.add_input_text(tag=file_name_tag, label="File Name", default_value="my_recording.log")
@@ -492,6 +528,8 @@ def run_gui(world, client):
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Previous Vehicle", callback=on_switch_to_previous_vehicle, user_data=world)
                 dpg.add_button(label="Next Vehicle", callback=on_switch_to_next_vehicle, user_data=world)
+
+            dpg.add_button(label="Toggle Fullscreen", callback=toggle_fullscreen)
             
 
 
@@ -1874,12 +1912,19 @@ class CameraManager(object):
 # -- game_loop() ---------------------------------------------------------------
 # ==============================================================================
 
+need_gui_update = False
 
 def game_loop(args):
+    global display, fullscreen, screen_width, screen_height, need_gui_update
+
     pygame.init()
     pygame.font.init()
     world = None
     original_settings = None
+
+    screen_width, screen_height = args.width, args.height
+    display = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+    fullscreen = False  # Start in windowed mode
 
     try:
         client = carla.Client(args.host, args.port)
@@ -1899,9 +1944,6 @@ def game_loop(args):
             traffic_manager = client.get_trafficmanager()
             traffic_manager.set_synchronous_mode(True)
 
-        display = pygame.display.set_mode(
-            (args.width, args.height),
-            pygame.HWSURFACE | pygame.DOUBLEBUF)
         hud = HUD(args.width, args.height)
         world = World(sim_world, hud, args, client)
         controller = KeyboardControl(world, args.autopilot)
@@ -1919,6 +1961,16 @@ def game_loop(args):
 
         clock = pygame.time.Clock()
         while True:
+
+            for event in pygame.event.get():
+                    if event.type == TOGGLE_FULLSCREEN:
+                        fullscreen = not fullscreen
+                        if fullscreen:
+                            display = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+                        else:
+                            display = pygame.display.set_mode((screen_width, screen_height), pygame.RESIZABLE)
+                        need_gui_update = True                        
+
             if args.sync:
                 sim_world.tick()
             else:
@@ -1941,7 +1993,11 @@ def game_loop(args):
                 )
                 new_transform = carla.Transform(new_location, vehicle_transform.rotation)
                 spectator.set_transform(new_transform)
-            
+
+            if need_gui_update:
+                # dpg.configure_item("fullscreen_button", label="Fullscreen On" if fullscreen else "Fullscreen Off")
+                need_gui_update = False 
+
             world.restart_if_requested()
             world.move_props()
             world.tick(clock)
